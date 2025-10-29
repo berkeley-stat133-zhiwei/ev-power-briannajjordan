@@ -3,32 +3,144 @@ title: "EV Power - Lab 4 Project Report"
 format: typst
 ---
 
-# Example Solution 1
-
 ## **Part 0: libraries**
 
 ```{r}
+library(tidyverse)
+library(sf)
+library(leaflet)
 
+setwd("/Users/briannajordan/stat133/ev-power-briannajjordan")
+
+renew_2021 <- read.csv("data/renew-use-2021.csv")
+renew_2022 <- read.csv("data/renew-use-2022.csv")
+renew_2023 <- read.csv("data/renew-use-2023.csv")
+total_energy_2021 <- read.csv("data/total-use-2021.csv")
+total_energy_2022 <- read.csv("data/total-use-2022.csv")
+total_energy_2023 <- read.csv("data/total-use-2023.csv")
+ev_registrations_2023 <- read.csv("data/ev-registrations-by-state-2023.csv")
+avg_energy_price_2021_2023 <- read.csv("data/av-energy-price-2021-2023.csv")
 ```
 
 ## **Part 1:** **Defining Research Question**
 
-Chosen Question:
+Chosen Question: How has the share of renewable energy changed from 2021 to 2023 across the US?
 
 ## **Part 2: Data Preparation and Cleaning**
 
 ```{r}
+clean_df <- function(df) {df |>
+    rename_with(tolower) |>         
+    rename(state = 1) |>            
+    mutate(state = str_to_title(state))}
 
+renew_2021 <- clean_df(renew_2021)
+renew_2022 <- clean_df(renew_2022)
+renew_2023 <- clean_df(renew_2023)
+total_2021 <- clean_df(total_energy_2021)
+total_2022 <- clean_df(total_energy_2022)
+total_2023 <- clean_df(total_energy_2023)
+
+head(renew_2021)
 ```
 
 ## **Part 3: Joining / Pivoting Datasets for Analysis**
 
 ```{r}
+clean_df <- function(df) {df |> 
+    rename_with(tolower) |>
+    rename(state = 1) |>
+    mutate(state = str_to_title(state))}
 
+renew_2021 <- clean_df(renew_2021)
+renew_2022 <- clean_df(renew_2022)
+renew_2023 <- clean_df(renew_2023)
+total_2021 <- clean_df(total_energy_2021)
+total_2022 <- clean_df(total_energy_2022)
+total_2023 <- clean_df(total_energy_2023)
+
+sum_renew <- function(df) {
+  df |>
+    rename(renewable_use = starts_with("renewable_use")) |> 
+    mutate(renewable_use = as.numeric(renewable_use)) |> 
+    group_by(state) |> 
+    summarize(renewable_use = sum(renewable_use, na.rm = TRUE))}
+
+renew_2021_clean <- sum_renew(renew_2021)
+renew_2022_clean <- sum_renew(renew_2022)
+renew_2023_clean <- sum_renew(renew_2023)
+
+tidy_total <- function(df) {df |> 
+    select(-state) |> 
+    pivot_longer(everything(), names_to = "state", values_to = "total_use") |> 
+    mutate(total_use = as.numeric(total_use),
+           state = str_to_title(state))}
+
+total_2021_tidy <- tidy_total(total_2021)
+total_2022_tidy <- tidy_total(total_2022)
+total_2023_tidy <- tidy_total(total_2023)
+
+combine_year <- function(renew, total, year_val) {
+  left_join(renew, total, by = "state") |>
+    mutate(
+      total_use = as.numeric(total_use),
+      renewable_use = as.numeric(renewable_use),
+      year = year_val,
+      renew_share = ifelse(is.finite(total_use) & total_use > 0,
+                           (renewable_use / total_use) * 100,
+                           NA_real_)) |>
+    select(state, year, renew_share)}
+
+all_years <- bind_rows(
+  combine_year(renew_2021_clean, total_2021_tidy, 2021),
+  combine_year(renew_2022_clean, total_2022_tidy, 2022),
+  combine_year(renew_2023_clean, total_2023_tidy, 2023))
+
+all_years_clean <- all_years |>
+  group_by(state, year) |>
+  summarize(
+    renew_share = mean(renew_share, na.rm = TRUE), 
+    .groups = "drop")
+
+head(all_years_clean)
 ```
 
 ## **Part 4: Mapping Visualization**
 
 ```{r}
+all_years_clean2 <- all_years_clean |>
+  mutate(
+    state = toupper(state),
+    state = tolower(state.name[match(state, state.abb)])
+  ) |>
+  filter(!is.na(state)) 
 
+us_states <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) |>
+  mutate(state = tolower(ID))
+
+plot_renew_map <- function(year_val) {
+  df <- all_years_clean2 |>
+    filter(year == year_val)
+
+  map_df <- us_states |>
+    left_join(df, by = "state")
+
+  ggplot(map_df) +
+    geom_sf(aes(fill = renew_share), color = "white") +
+    scale_fill_gradient(
+      name = "Renewable Share (%)",
+      low = "lightblue",
+      high = "darkgreen",
+      na.value = "gray") +
+    labs(title = paste("Renewable Energy Share by State", year_val),
+      subtitle = "Percent of total energy from renewable sources") +
+    theme_minimal() +
+    theme(legend.position = "right", panel.grid.major = element_blank())}
+
+plot_renew_map(2021)
+plot_renew_map(2022)
+plot_renew_map(2023)
 ```
+
+## Analysis
+From 2021 to 2023, renewable shares have stayed relatively stable with greater amounts seen in the west coast and the east coast. Oregon has the largest percentage of renewable energy because it is very dark green. In terms of our main research question, although EVs decrease emissions, my maps show that the electricity powering them varies significantly across the U.S. In states with high renewable energy shares (e.g., California, Oregon, Vermont), EVs are low-carbon. In states with lower renewable shares, EV charging still relies heavily on fossil fuels, reducing but not eliminating emissions.
